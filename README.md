@@ -14,7 +14,7 @@ then
 ```
 
 ## What I do
-- Implement P2P network with [Libp2p-go](https://github.com/libp2p/go-libp2p)
+- Implement simple P2P network
 - Implement Snowball Consensus Algorithm
 
 ## What I should improve
