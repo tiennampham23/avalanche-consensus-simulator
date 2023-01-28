@@ -3,16 +3,12 @@ package chain
 import (
 	"context"
 	"encoding/json"
-	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/pkg/errors"
+	"github.com/tiennampham23/avalanche-consensus-simulator/model"
 	"github.com/tiennampham23/avalanche-consensus-simulator/network/p2p"
 	"github.com/tiennampham23/avalanche-consensus-simulator/snow/consensus"
 	"math/rand"
 )
-
-type request struct {
-	Index int `json:"index"`
-}
 
 type Config struct {
 	P2PConfig           p2p.Config
@@ -26,20 +22,21 @@ type BlockChain struct {
 	isRunning bool
 }
 
-func InitBlockChain(cfg Config) (*BlockChain, error) {
+func InitBlockChain(ctx context.Context, cfg Config, discovery *p2p.Discovery) (*BlockChain, error) {
 	blockChainState := InitBlockChainState()
 	blockchain := &BlockChain{
 		BlockChainState: blockChainState,
 		cfg:             cfg,
 	}
-	getDataFromBlockIndexCb := func(req []byte) ([]byte, error) {
-		return blockchain.getBlockDataByIndex(req)
+	getDataFromBlockIndexCb := func(index int) ([]byte, error) {
+		return blockchain.getBlockDataByIndex(index)
 	}
-	client, err := p2p.InitClient(cfg.P2PConfig, getDataFromBlockIndexCb)
+	client, err := p2p.InitClient(ctx, cfg.P2PConfig, discovery, getDataFromBlockIndexCb)
 	if err != nil {
 		return nil, err
 	}
 	blockchain.client = client
+
 	return blockchain, nil
 }
 
@@ -74,7 +71,10 @@ func (c *BlockChain) Sync(ctx context.Context) error {
 }
 
 func (c *BlockChain) getBlockDataFromKPeersByIndex(ctx context.Context, index int, k int) ([][]byte, error) {
-	peers := c.client.Peers()
+	peers, err := c.client.Peers()
+	if err != nil {
+		return nil, errors.Wrap(err, "unable to get the peers from the discovery")
+	}
 	lengthPeers := len(peers)
 	var preferencesFromOtherPeers [][]byte
 
@@ -98,15 +98,12 @@ func (c *BlockChain) getBlockDataFromKPeersByIndex(ctx context.Context, index in
 	}
 	return preferencesFromOtherPeers, nil
 }
-func (c *BlockChain) getDataFromOtherPeerByIndex(ctx context.Context, peer *peer.AddrInfo, index int) ([]byte, error) {
-	req := request{
+func (c *BlockChain) getDataFromOtherPeerByIndex(ctx context.Context, peer *p2p.Peer, index int) ([]byte, error) {
+	req := model.GetBlockDataByIndexRequest{
 		Index: index,
 	}
-	reqData, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-	blockDataResponse, err := c.client.GetBlockData(ctx, peer, reqData)
+
+	blockDataResponse, err := c.client.GetBlockData(ctx, peer, req)
 	if err != nil {
 		return nil, err
 	}
@@ -114,29 +111,18 @@ func (c *BlockChain) getDataFromOtherPeerByIndex(ctx context.Context, peer *peer
 		return nil, errors.New("the response is empty")
 	}
 
-	var blockData []byte
-	err = json.Unmarshal(blockDataResponse, &blockData)
-	if err != nil {
-		return nil, err
-	}
-
-	return blockData, nil
+	return blockDataResponse, nil
 }
 
-func (c *BlockChain) getBlockDataByIndex(reqData []byte) ([]byte, error) {
-	var req request
-	err := json.Unmarshal(reqData, &req)
-	if err != nil {
-		return nil, err
-	}
-	if req.Index < 0 {
+func (c *BlockChain) getBlockDataByIndex(index int) ([]byte, error) {
+	if index < 0 {
 		return nil, errors.New("Index is smaller than 0")
 	}
-	if req.Index >= len(c.Blocks) {
+	if index >= len(c.Blocks) {
 		return nil, errors.New("Index is larger than the length of blocks")
 	}
 
-	block := c.Blocks[req.Index]
+	block := c.Blocks[index]
 
 	b, err := json.Marshal(block.Data)
 	if err != nil {

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"github.com/gin-gonic/gin"
 	"github.com/tiennampham23/avalanche-consensus-simulator/chain"
 	"github.com/tiennampham23/avalanche-consensus-simulator/network/p2p"
 	"github.com/tiennampham23/avalanche-consensus-simulator/node"
@@ -11,16 +13,16 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 )
 
 const (
 	protocolID  = "avalanche-consensus-simulator/1.0.0"
 	serviceName = "avalanche-consensus"
 	host        = "127.0.0.1"
-	port        = 0
-	k           = 2
+	k           = 3
 	alpha       = 2
-	beta        = 2
+	beta        = 1
 	numOfBlocks = 4
 )
 
@@ -29,12 +31,32 @@ func main() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	var wg sync.WaitGroup
+	discovery, err := runDiscovery()
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	for j := 0; j < 20; j++ {
+	healthyPeersTicker := time.NewTicker(1 * time.Minute)
+	go func() {
+		for {
+			select {
+			case <-sigs:
+				return
+			case <-healthyPeersTicker.C:
+				err := discovery.HealthCheckPeers()
+				if err != nil {
+					log.Fatal(err)
+				}
+			}
+		}
+	}()
+
+	time.Sleep(1 * time.Second)
+
+	for j := 0; j < 200; j++ {
 		wg.Add(1)
-		go func(j int) {
+		go func(j int, discovery *p2p.Discovery) {
 			doneChan := make(chan bool, 1)
-
 			defer wg.Done()
 			go func() {
 				<-sigs
@@ -45,7 +67,7 @@ func main() {
 				Name:       serviceName,
 				ProtocolID: protocolID,
 				Host:       host,
-				Port:       port,
+				Port:       10000 + j,
 			}
 			parameters := consensus.Parameters{
 				K:     k,
@@ -55,7 +77,7 @@ func main() {
 			n, err := node.InitNode(ctx, chain.Config{
 				P2PConfig:           p2pConfig,
 				ConsensusParameters: parameters,
-			})
+			}, discovery)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -76,13 +98,29 @@ func main() {
 			if err != nil {
 				log.Fatal(err)
 			}
-
-			for i, block := range n.Blocks {
-				log.Infof("client: %d, index: %d, block: %v", j, i, block.Data)
+			blockChainState := ""
+			for _, b := range n.Blocks {
+				data := b.Data[0]
+				blockChainState += fmt.Sprintf("%d", data)
 			}
+			log.Infof("client: %d, block: %s", j, blockChainState)
+
 			<-doneChan
-		}(j)
+		}(j, discovery)
 	}
 	wg.Wait()
 
+}
+
+func runDiscovery() (*p2p.Discovery, error) {
+	discovery := p2p.InitDiscovery()
+	r := gin.New()
+	discovery.Router(r)
+	go func() {
+		err := r.Run(discovery.Address)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}()
+	return discovery, nil
 }
