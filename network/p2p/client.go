@@ -57,6 +57,7 @@ func InitClient(ctx context.Context, cfg Config, discovery *Discovery, getBlockD
 	if cfg.Host == "" {
 		cfg.Host = "0.0.0.0"
 	}
+	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	restyClient := resty.
 		New().
